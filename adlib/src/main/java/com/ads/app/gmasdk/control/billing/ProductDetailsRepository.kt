@@ -135,19 +135,72 @@ class ProductDetailsRepository {
         return offers.last().pricingPhases.pricingPhaseList
     }
 
-    fun getIntroductorySubPrice(productId: String): String {
+    fun getIntroductorySubPrice(productId: String, offerId: String? = null): String {
         val d = skuDetailsSubsMap[productId] ?: return ""
-        val oneTime = d.oneTimePurchaseOfferDetails
-        val subsOffers = d.subscriptionOfferDetails
-        return when {
-            oneTime != null -> oneTime.formattedPrice
-            subsOffers != null -> {
-                val phases = subsOffers.last().pricingPhases.pricingPhaseList
-                phases.last().formattedPrice
-            }
-            else -> ""
-        }
+        val subsOffers = d.subscriptionOfferDetails ?: return ""
+        val targetOffer = if (offerId != null) {
+            subsOffers.firstOrNull { it.offerId == offerId }
+        } else {
+            subsOffers.firstOrNull { it.offerId != null }
+        } ?: return ""
+        return targetOffer.pricingPhases.pricingPhaseList
+            .firstOrNull { it.priceAmountMicros > 0 }?.formattedPrice ?: ""
     }
+
+    fun getProductInfoList(): List<BillingProductInfo> {
+        val result = mutableListOf<BillingProductInfo>()
+
+        skuDetailsINAPMap.forEach { (productId, details) ->
+            val offer = details.oneTimePurchaseOfferDetails
+            result.add(
+                BillingProductInfo(
+                    productId = productId,
+                    name = details.name,
+                    type = 1,
+                    price = offer?.formattedPrice ?: "",
+                    priceMicros = offer?.priceAmountMicros ?: 0L,
+                    currency = offer?.priceCurrencyCode ?: "",
+                )
+            )
+        }
+
+        skuDetailsSubsMap.forEach { (productId, details) ->
+            val offers = details.subscriptionOfferDetails ?: return@forEach
+            val promoOffer = offers.firstOrNull { it.offerId != null }
+            val baseOffer = offers.firstOrNull { it.offerId == null } ?: offers.last()
+            val promoPhases = promoOffer?.pricingPhases?.pricingPhaseList
+            val trialPhase = promoPhases?.firstOrNull { it.priceAmountMicros == 0L }
+            val introPhase = promoPhases?.firstOrNull { it.priceAmountMicros > 0L }
+            val regularPhase = baseOffer.pricingPhases.pricingPhaseList.last()
+            result.add(
+                BillingProductInfo(
+                    productId = productId,
+                    name = details.name,
+                    type = 2,
+                    regularPrice = regularPhase.formattedPrice,
+                    regularPriceMicros = regularPhase.priceAmountMicros,
+                    currency = regularPhase.priceCurrencyCode,
+                    billingPeriod = regularPhase.billingPeriod,
+                    introPrice = introPhase?.formattedPrice ?: "",
+                    introPriceMicros = introPhase?.priceAmountMicros ?: 0L,
+                    introBillingPeriod = introPhase?.billingPeriod ?: "",
+                    introCycles = introPhase?.billingCycleCount ?: 0,
+                    trialPeriod = trialPhase?.billingPeriod ?: "",
+                    promoOfferId = promoOffer?.offerId,
+                    promoOfferToken = promoOffer?.offerToken ?: "",
+                    baseOfferToken = baseOffer.offerToken,
+                )
+            )
+        }
+
+        return result
+    }
+
+    fun getInAppProductIds(): List<String> = skuDetailsINAPMap.keys.toList()
+
+    fun getSubscriptionProductIds(): List<String> = skuDetailsSubsMap.keys.toList()
+
+    fun getAllProductIds(): List<String> = getInAppProductIds() + getSubscriptionProductIds()
 
     fun getCurrency(productId: String, typeIAP: Int): String {
         val d = if (typeIAP == 1) skuDetailsINAPMap[productId] else skuDetailsSubsMap[productId]

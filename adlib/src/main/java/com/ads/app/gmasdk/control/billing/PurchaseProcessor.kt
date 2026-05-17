@@ -196,7 +196,7 @@ class PurchaseProcessor(
                 return item.offerToken
             }
         }
-        return subsDetail.last().offerToken
+        return subsDetail.firstOrNull { it.offerId == null }?.offerToken ?: subsDetail.last().offerToken
     }
 
     fun handlePurchase(purchase: Purchase) {

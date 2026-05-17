@@ -4,21 +4,75 @@ import android.app.Activity
 import android.app.Application
 import android.util.Log
 import com.ads.app.gmasdk.control.util.AppUtil
+import com.android.billingclient.api.BillingClient
 import com.android.billingclient.api.BillingResult
 import com.android.billingclient.api.ProductDetails
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 
 class AppPurchase private constructor() {
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var timeoutJob: Job? = null
 
     private var connectionManager: BillingConnectionManager? = null
     private var repository: ProductDetailsRepository? = null
     private var verifier: PurchaseVerifier? = null
     private var processor: PurchaseProcessor? = null
 
+    private var billingListener: BillingListener? = null
+    private var updatePurchaseListener: UpdatePurchaseListener? = null
+    private var enableTrackingRevenue: Boolean = false
+    private var discount: Double = 1.0
+
     val billingState: StateFlow<BillingState>?
         get() = connectionManager?.state
 
     fun isPurchasedFlow(): StateFlow<Boolean>? = verifier?.isPurchasedFlow()
+
+    fun setBillingListener(billingListener: BillingListener?) {
+        this.billingListener = billingListener
+        if (isAvailable() || getInitBillingFinish()) {
+            billingListener?.onInitBillingFinished(0)
+        }
+    }
+
+    fun setBillingListener(billingListener: BillingListener?, timeout: Int) {
+        Log.d(TAG, "setBillingListener: timeout=$timeout")
+        this.billingListener = billingListener
+        if (getInitBillingFinish() || isAvailable()) {
+            Log.d(TAG, "setBillingListener: already finished")
+            billingListener?.onInitBillingFinished(0)
+            return
+        }
+        timeoutJob?.cancel()
+        timeoutJob = scope.launch {
+            delay(timeout.toLong())
+            Log.d(TAG, "setBillingListener: timeout fired")
+            billingListener?.onInitBillingFinished(BillingClient.BillingResponseCode.ERROR)
+        }
+    }
+
+    fun setUpdatePurchaseListener(listener: UpdatePurchaseListener?) {
+        this.updatePurchaseListener = listener
+    }
+
+    fun setEnableTrackingRevenue(enable: Boolean) {
+        enableTrackingRevenue = enable
+    }
+
+    fun getEnableTrackingRevenue(): Boolean = enableTrackingRevenue
+
+    fun setDiscount(discount: Double) {
+        this.discount = discount
+    }
+
+    fun getDiscount(): Double = discount
 
     fun initBilling(application: Application, purchaseItemList: MutableList<PurchaseItem>) {
         if (connectionManager != null) {
@@ -55,7 +109,10 @@ class AppPurchase private constructor() {
                         repo.listSubscriptionId,
                         repo.productIdMap,
                         shouldConsume = { productId -> repo.shouldConsume(productId) },
-                        onComplete = null
+                        onComplete = { code ->
+                            timeoutJob?.cancel()
+                            billingListener?.onInitBillingFinished(code)
+                        }
                     )
                 }
                 when (billingResult.responseCode) {
@@ -80,7 +137,7 @@ class AppPurchase private constructor() {
             repo.listSubscriptionId,
             repo.productIdMap,
             shouldConsume = { productId -> repo.shouldConsume(productId) },
-            onComplete = null
+            onComplete = { updatePurchaseListener?.onUpdateFinished() }
         )
     }
 
@@ -91,7 +148,7 @@ class AppPurchase private constructor() {
     fun isPurchased(): Boolean = verifier?.isPurchased ?: false
 
     fun setPurchase(purchase: Boolean) {
-        verifier?.isPurchased =(purchase)
+        verifier?.isPurchased = purchase
     }
 
     fun getOwnerIdSubs(): List<PurchaseResult> = verifier?.getOwnerIdSubs() ?: emptyList()
@@ -142,6 +199,15 @@ class AppPurchase private constructor() {
         triggerUpdatePurchaseStatus()
     }
 
+    fun getProductInfoList(): List<BillingProductInfo> =
+        repository?.getProductInfoList() ?: emptyList()
+
+    fun getInAppProductIds(): List<String> = repository?.getInAppProductIds() ?: emptyList()
+
+    fun getSubscriptionProductIds(): List<String> = repository?.getSubscriptionProductIds() ?: emptyList()
+
+    fun getAllProductIds(): List<String> = repository?.getAllProductIds() ?: emptyList()
+
     fun getPrice(productId: String): String =
         repository?.getPrice(productId) ?: ""
 
@@ -157,8 +223,8 @@ class AppPurchase private constructor() {
     fun getTrialPeriod(productId: String): String =
         repository?.getTrialPeriod(productId) ?: ""
 
-    fun getIntroductorySubPrice(productId: String): String =
-        repository?.getIntroductorySubPrice(productId) ?: ""
+    fun getIntroductorySubPrice(productId: String, offerId: String? = null): String =
+        repository?.getIntroductorySubPrice(productId, offerId) ?: ""
 
     fun getCurrency(productId: String, typeIAP: Int): String =
         repository?.getCurrency(productId, typeIAP) ?: ""

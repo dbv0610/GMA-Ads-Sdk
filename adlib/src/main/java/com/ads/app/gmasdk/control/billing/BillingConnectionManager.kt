@@ -41,7 +41,10 @@ class BillingConnectionManager {
         billingClient = BillingClient.newBuilder(application as Context)
             .setListener(purchasesUpdatedListener)
             .enablePendingPurchases(
-                PendingPurchasesParams.newBuilder().enableOneTimeProducts().build()
+                PendingPurchasesParams.newBuilder()
+                    .enableOneTimeProducts()
+                    .enablePrepaidPlans()
+                    .build()
             )
             .build()
 
