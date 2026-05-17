@@ -1,9 +1,11 @@
+import java.util.Properties
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    `maven-publish`
 }
 
 android {
@@ -37,6 +39,10 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    publishing {
+        singleVariant("release")
     }
 }
 
@@ -132,4 +138,36 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+}
+
+val localProps = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) load(file.inputStream())
+}
+
+afterEvaluate {
+    publishing {
+        publications {
+            create<MavenPublication>("release") {
+                from(components["release"])
+                groupId = "com.ads.app"
+                artifactId = "gmasdk"
+                version = "1.0.1"
+            }
+        }
+        repositories {
+            val gprUser = localProps.getProperty("gpr.user") ?: System.getenv("GITHUB_ACTOR")
+            val gprKey = localProps.getProperty("gpr.key") ?: System.getenv("GITHUB_TOKEN")
+            if (gprUser != null && gprKey != null) {
+                maven {
+                    name = "GitHubPackages"
+                    url = uri("https://maven.pkg.github.com/dbv0610/GMA-Ads-Sdk")
+                    credentials {
+                        username = gprUser
+                        password = gprKey
+                    }
+                }
+            }
+        }
+    }
 }

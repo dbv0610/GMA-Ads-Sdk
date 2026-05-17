@@ -1,7 +1,7 @@
 package com.ads.app.gmasdk.control.admob
 
+import ads_mobile_sdk.ad
 import android.app.Activity
-import android.content.Context
 import android.graphics.Paint
 import android.os.Build
 import android.os.Bundle
@@ -69,7 +69,6 @@ fun Admob.loadBanner(
         containerShimmer.visibility = View.GONE
         return
     }
-    val appCtx = mActivity.applicationContext
     containerShimmer.visibility = View.VISIBLE
     containerShimmer.startShimmer()
     try {
@@ -90,11 +89,11 @@ fun Admob.loadBanner(
                 callback?.onAdLoaded()
             }
 
-            override fun onAdFailedToLoad(loadAdError: LoadAdError) {
+            override fun onAdFailedToLoad(adError: LoadAdError) {
                 containerShimmer.stopShimmer()
                 containerShimmer.visibility = View.GONE
                 adContainer.visibility = View.GONE
-                callback?.onAdFailedToLoad(loadAdError)
+                callback?.onAdFailedToLoad(adError)
             }
         })
     } catch (e: Exception) {
@@ -126,7 +125,6 @@ fun Admob.requestLoadBanner(
         callback.onAdFailedToLoad(LoadAdError(LoadAdError.ErrorCode.CANCELLED, "App isPurchased", null as ResponseInfo?))
         return
     }
-    val appCtx = mActivity.applicationContext
     try {
         val adView = AdView(mActivity)
         val adSize = getAdSize(mActivity, useInlineAdaptive)
@@ -139,8 +137,8 @@ fun Admob.requestLoadBanner(
                 callback.onBannerLoaded(adView)
             }
 
-            override fun onAdFailedToLoad(loadAdError: LoadAdError) {
-                callback.onAdFailedToLoad(loadAdError)
+            override fun onAdFailedToLoad(adError: LoadAdError) {
+                callback.onAdFailedToLoad(adError)
             }
         })
     } catch (e: Exception) {
@@ -164,7 +162,6 @@ fun Admob.requestLoadBanner(
         callback.onAdFailedToLoad(LoadAdError(LoadAdError.ErrorCode.CANCELLED, "App isPurchased", null as ResponseInfo?))
         return
     }
-    val appCtx = mActivity.applicationContext
     try {
         val adView = AdView(mActivity)
         val adSize = getAdSize(mActivity, useInlineAdaptive, maxHeight)
@@ -176,8 +173,8 @@ fun Admob.requestLoadBanner(
                 callback.onBannerLoaded(adView)
             }
 
-            override fun onAdFailedToLoad(loadAdError: LoadAdError) {
-                callback.onAdFailedToLoad(loadAdError)
+            override fun onAdFailedToLoad(adError: LoadAdError) {
+                callback.onAdFailedToLoad(adError)
             }
         })
     } catch (e: Exception) {
@@ -201,7 +198,6 @@ fun Admob.loadCollapsibleBanner(
         containerShimmer.visibility = View.GONE
         return
     }
-    val appCtx = mActivity.applicationContext
     containerShimmer.visibility = View.VISIBLE
     containerShimmer.startShimmer()
     try {
@@ -220,11 +216,11 @@ fun Admob.loadCollapsibleBanner(
                 callback?.onAdLoaded()
             }
 
-            override fun onAdFailedToLoad(loadAdError: LoadAdError) {
+            override fun onAdFailedToLoad(adError: LoadAdError) {
                 containerShimmer.stopShimmer()
                 containerShimmer.visibility = View.GONE
                 adContainer.visibility = View.GONE
-                callback?.onAdFailedToLoad(loadAdError)
+                callback?.onAdFailedToLoad(adError)
             }
         })
     } catch (e: Exception) {
@@ -232,26 +228,27 @@ fun Admob.loadCollapsibleBanner(
     }
 }
 
-fun Admob.getAdSize(mActivity: Activity, useInlineAdaptive: Boolean, maxHeight: Int): AdSize {
+fun getAdSize(mActivity: Activity, useInlineAdaptive: Boolean, maxHeight: Int): AdSize {
     val adWidth = getAdWidthDp(mActivity)
     Log.e(TAG, "getAdSize: $useInlineAdaptive : $maxHeight")
     return if (useInlineAdaptive) {
         AdSize.getInlineAdaptiveBannerAdSize(adWidth, maxHeight)
     } else {
-        AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(mActivity, adWidth)
+        AdSize.getPortraitInlineAdaptiveBannerAdSize(mActivity, adWidth)
     }
 }
 
-fun Admob.getAdSize(mActivity: Activity, useInlineAdaptive: Boolean): AdSize {
+fun getAdSize(mActivity: Activity, useInlineAdaptive: Boolean): AdSize {
     val adWidth = getAdWidthDp(mActivity)
     return if (useInlineAdaptive) {
         AdSize.getCurrentOrientationInlineAdaptiveBannerAdSize(mActivity, adWidth)
     } else {
-        AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(mActivity, adWidth)
+        AdSize.getLargePortraitAnchoredAdaptiveBannerAdSize(mActivity, adWidth)
     }
+
 }
 
-internal fun Admob.getAdWidthDp(activity: Activity): Int {
+internal fun getAdWidthDp(activity: Activity): Int {
     val widthPixels: Float = if (Build.VERSION.SDK_INT >= 30) {
         activity.windowManager.currentWindowMetrics.bounds.width().toFloat()
     } else {
@@ -264,7 +261,7 @@ internal fun Admob.getAdWidthDp(activity: Activity): Int {
     return (widthPixels / density).toInt()
 }
 
-internal fun Admob.getAdRequestForCollapsibleBanner(
+internal fun getAdRequestForCollapsibleBanner(
     adUnitId: String,
     adSize: AdSize,
     gravity: String?
