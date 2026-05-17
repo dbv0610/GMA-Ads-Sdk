@@ -12,7 +12,8 @@
 8. [Reward Ads](#reward-ads)
 9. [App Open Ads](#app-open-ads)
 10. [Native Ad Preloading](#native-ad-preloading)
-11. [Running Tests](#running-tests)
+11. [In-App Billing](#in-app-billing)
+12. [Running Tests](#running-tests)
 
 ---
 
@@ -472,6 +473,207 @@ NativeAd(tag = "home", adUnitId = BuildConfig.AD_NATIVE) { ad -> ... }
 ```kotlin
 val count = NativeAdPreload.getInstance()
     .getNativeAdBuffer(BuildConfig.AD_NATIVE, 0).size
+```
+
+---
+
+## In-App Billing
+
+`AppPurchase` wraps the Google Play Billing Library. It splits concerns across:
+
+| Class | Role |
+|---|---|
+| `AppPurchase` | Singleton facade — the only class your app touches |
+| `BillingConnectionManager` | Manages the `BillingClient` connection with exponential-backoff reconnect |
+| `ProductDetailsRepository` | Caches `ProductDetails` from Play Store; price/period helpers |
+| `PurchaseVerifier` | Queries owned purchases on init and exposes `isPurchased` as a `StateFlow` |
+| `PurchaseProcessor` | Launches billing flows; handles `PurchasesUpdatedListener` |
+
+---
+
+### Setup — declare products
+
+```kotlin
+val items = mutableListOf(
+    PurchaseItem(
+        itemId  = BuildConfig.IAP_PRODUCT_ID,   // one-time purchase
+        type    = AppPurchase.TYPE_IAP.PURCHASE,
+        consume = false                          // set true for consumables
+    ),
+    PurchaseItem(
+        itemId  = BuildConfig.SUB_MONTHLY,      // subscription
+        type    = AppPurchase.TYPE_IAP.SUBSCRIPTION,
+        trialId = "promo-trial-3day"            // optional: offer ID for trial
+    ),
+)
+
+AppPurchase.getInstance().initBilling(application, items)
+```
+
+Call once in `Application.onCreate()`.
+
+---
+
+### Wait for billing to be ready
+
+**Callback (recommended):**
+
+```kotlin
+// With timeout — fires onInitBillingFinished(ERROR) if billing stalls
+AppPurchase.getInstance().setBillingListener(object : BillingListener {
+    override fun onInitBillingFinished(resultCode: Int) {
+        val isPurchased = AppPurchase.getInstance().isPurchased()
+        // update UI, unlock features, etc.
+    }
+}, timeout = 10_000)
+```
+
+**StateFlow (Compose / coroutine):**
+
+```kotlin
+lifecycleScope.launch {
+    AppPurchase.getInstance().billingState?.collect { state ->
+        when (state) {
+            is BillingState.Connected    -> { /* ready */ }
+            is BillingState.Disconnected -> { /* retry / hide paywall */ }
+            is BillingState.Error        -> { /* show error */ }
+            else -> Unit
+        }
+    }
+}
+```
+
+**Observe purchase state as Flow:**
+
+```kotlin
+lifecycleScope.launch {
+    AppPurchase.getInstance().isPurchasedFlow()?.collect { purchased ->
+        updatePremiumUI(purchased)
+    }
+}
+```
+
+---
+
+### Make a purchase
+
+```kotlin
+AppPurchase.getInstance().purchase(activity, BuildConfig.IAP_PRODUCT_ID) { event ->
+    when (event) {
+        is PurchaseEvent.Success  -> { /* unlock feature */ }
+        is PurchaseEvent.Pending  -> { /* show "pending payment" UI */ }
+        is PurchaseEvent.Cancelled -> { /* user closed the sheet */ }
+        is PurchaseEvent.Error    -> showError(event.message)
+    }
+}
+```
+
+### Subscribe
+
+```kotlin
+AppPurchase.getInstance().subscribe(activity, BuildConfig.SUB_MONTHLY) { event ->
+    when (event) {
+        is PurchaseEvent.Success -> { /* grant premium */ }
+        else -> { /* handle */ }
+    }
+}
+```
+
+### Upgrade / change plan
+
+```kotlin
+val oldToken = AppPurchase.getInstance().getSubscriptionPurchaseToken(BuildConfig.SUB_MONTHLY)
+AppPurchase.getInstance().upgradeSubscription(
+    activity        = this,
+    newSubsId       = BuildConfig.SUB_YEARLY,
+    oldPurchaseToken = oldToken ?: "",
+    replacementMode = BillingFlowParams.SubscriptionUpdateParams.ReplacementMode.CHARGE_FULL_PRICE
+) { event -> /* handle */ }
+```
+
+---
+
+### Check purchase status
+
+```kotlin
+// Simple boolean
+if (AppPurchase.getInstance().isPurchased()) {
+    showPremiumContent()
+}
+
+// Who owns what
+val ownedSubs   = AppPurchase.getInstance().getOwnerIdSubs()   // List<PurchaseResult>
+val ownedInApps = AppPurchase.getInstance().getOwnerIdInApp()  // List<PurchaseResult>
+
+// Force a re-query (e.g. after returning from another screen)
+AppPurchase.getInstance().updatePurchaseStatus()
+AppPurchase.getInstance().setUpdatePurchaseListener(UpdatePurchaseListener {
+    // called when the re-query completes
+    refreshUI()
+})
+```
+
+---
+
+### Get product info for your paywall UI
+
+```kotlin
+val products = AppPurchase.getInstance().getProductInfoList()
+
+products.forEach { info ->
+    when (info.type) {
+        AppPurchase.TYPE_IAP.PURCHASE -> {
+            // info.price, info.priceMicros, info.currency
+        }
+        AppPurchase.TYPE_IAP.SUBSCRIPTION -> {
+            // info.regularPrice, info.billingPeriod
+            // info.introPrice / info.introCycles  (discounted intro period)
+            // info.trialPeriod                    (free trial, e.g. "P3D")
+            // info.hasPromo, info.hasTrial, info.hasIntroPrice
+        }
+    }
+}
+```
+
+Price helpers (available after `onInitBillingFinished`):
+
+```kotlin
+AppPurchase.getInstance().getPrice(productId)                        // INAP formatted price
+AppPurchase.getInstance().getPriceSub(productId)                     // sub regular price
+AppPurchase.getInstance().getIntroductorySubPrice(productId)         // first paid intro phase
+AppPurchase.getInstance().getIntroductorySubPrice(productId, offerId) // target a specific offer
+AppPurchase.getInstance().getTrialPeriod(productId)                  // e.g. "P3D"
+AppPurchase.getInstance().getPeriod(productId)                       // billing period "P1M"
+AppPurchase.getInstance().getPriceWithCurrency(productId, type)      // formatted with symbol
+AppPurchase.getInstance().getPriceWithCurrency(productId, type, 0.5) // at 50 % of regular price
+```
+
+---
+
+### Consumable products
+
+Mark `consume = true` in `PurchaseItem` to auto-consume on purchase. To manually consume (e.g. after granting coins server-side):
+
+```kotlin
+AppPurchase.getInstance().consumePurchase(BuildConfig.IAP_COINS)
+```
+
+---
+
+### Dev / test mode
+
+When `AppUtil.VARIANT_DEV = true`, `purchase()` and `subscribe()` open `PurchaseDevBottomSheet` instead of launching the real billing flow. Tapping **Purchase / Subscribe** fires a `PurchaseEvent.Success` with a synthetic order ID, so the rest of your flow runs end-to-end without a real transaction.
+
+A test product (`android.test.purchased`) is automatically appended to the product list in dev mode.
+
+---
+
+### Revenue tracking helpers
+
+```kotlin
+AppPurchase.getInstance().setEnableTrackingRevenue(true)  // opt-in flag read by your analytics layer
+AppPurchase.getInstance().setDiscount(0.5)                 // store a sale factor for price display
+val discount = AppPurchase.getInstance().getDiscount()
 ```
 
 ---
